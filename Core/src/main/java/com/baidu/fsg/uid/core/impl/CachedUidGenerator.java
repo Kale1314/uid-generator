@@ -50,37 +50,45 @@ import org.springframework.util.Assert;
 @Slf4j
 public class CachedUidGenerator extends DefaultUidGenerator implements AutoCloseable {
     private final Integer boostPower;
-    private final Long scheduleInterval;
-    private final Integer paddingFactor;
+    /** RingBuffer */
+    private final RingBuffer ringBuffer;
+    private final BufferPaddingExecutor bufferPaddingExecutor;
+
     public CachedUidGenerator(WorkerIdAssigner workerIdAssigner, CacheGeneratorProperties properties) {
         super(workerIdAssigner,properties);
-        this.scheduleInterval = properties.getScheduleInterval();
-        this.paddingFactor = properties.getPaddingFactor();
+        Long scheduleInterval = properties.getScheduleInterval();
+        Integer paddingFactor = properties.getPaddingFactor();
         this.boostPower =  properties.getBoostPower();
-    }
 
-
-
-    /** Spring properties */
-    private RejectedPutBufferHandler rejectedPutBufferHandler;
-    private RejectedTakeBufferHandler rejectedTakeBufferHandler;
-
-    /** RingBuffer */
-    private RingBuffer ringBuffer;
-    private BufferPaddingExecutor bufferPaddingExecutor;
-
-
-
-    @Override
-    public void afterPropertiesSet() {
-        // initialize workerId & bitsAllocator
-        super.afterPropertiesSet();
-        
         // initialize RingBuffer & RingBufferPaddingExecutor
-        this.initRingBuffer();
+        // initialize RingBuffer
+        int bufferSize = ((int) bitsAllocator.getMaxSequence() + 1) << boostPower;
+        this.ringBuffer = new RingBuffer(bufferSize, paddingFactor);
+        log.info("Initialized ring buffer size:{}, paddingFactor:{}", bufferSize, paddingFactor);
+
+        // initialize RingBufferPaddingExecutor
+        boolean usingSchedule = (scheduleInterval != null);
+        this.bufferPaddingExecutor = new BufferPaddingExecutor(ringBuffer, this::nextIdsForOneSecond, usingSchedule);
+        if (usingSchedule) {
+            bufferPaddingExecutor.setScheduleInterval(scheduleInterval);
+        }
+
+        log.info("Initialized BufferPaddingExecutor. Using schdule:{}, interval:{}", usingSchedule, scheduleInterval);
+
+        // set rejected put/take handle policy
+        this.ringBuffer.setBufferPaddingExecutor(bufferPaddingExecutor);
+        // fill in all slots of the RingBuffer
+        bufferPaddingExecutor.paddingBuffer();
+
+        // start buffer padding threads
+        bufferPaddingExecutor.start();
         log.info("Initialized RingBuffer successfully.");
     }
-    
+
+
+
+
+
     @Override
     public long getUID() {
         try {
@@ -121,50 +129,12 @@ public class CachedUidGenerator extends DefaultUidGenerator implements AutoClose
         return uidList;
     }
     
-    /**
-     * Initialize RingBuffer & RingBufferPaddingExecutor
-     */
-    private void initRingBuffer() {
-        // initialize RingBuffer
-        int bufferSize = ((int) bitsAllocator.getMaxSequence() + 1) << boostPower;
-        this.ringBuffer = new RingBuffer(bufferSize, paddingFactor);
-        log.info("Initialized ring buffer size:{}, paddingFactor:{}", bufferSize, paddingFactor);
-
-        // initialize RingBufferPaddingExecutor
-        boolean usingSchedule = (scheduleInterval != null);
-        this.bufferPaddingExecutor = new BufferPaddingExecutor(ringBuffer, this::nextIdsForOneSecond, usingSchedule);
-        if (usingSchedule) {
-            bufferPaddingExecutor.setScheduleInterval(scheduleInterval);
-        }
-        
-        log.info("Initialized BufferPaddingExecutor. Using schdule:{}, interval:{}", usingSchedule, scheduleInterval);
-        
-        // set rejected put/take handle policy
-        this.ringBuffer.setBufferPaddingExecutor(bufferPaddingExecutor);
-        if (rejectedPutBufferHandler != null) {
-            this.ringBuffer.setRejectedPutHandler(rejectedPutBufferHandler);
-        }
-        if (rejectedTakeBufferHandler != null) {
-            this.ringBuffer.setRejectedTakeHandler(rejectedTakeBufferHandler);
-        }
-        
-        // fill in all slots of the RingBuffer
-        bufferPaddingExecutor.paddingBuffer();
-        
-        // start buffer padding threads
-        bufferPaddingExecutor.start();
-    }
-
-
-    
     public void setRejectedPutBufferHandler(RejectedPutBufferHandler rejectedPutBufferHandler) {
-        Assert.notNull(rejectedPutBufferHandler, "RejectedPutBufferHandler can't be null!");
-        this.rejectedPutBufferHandler = rejectedPutBufferHandler;
+        this.ringBuffer.setRejectedPutHandler(rejectedPutBufferHandler);
     }
 
     public void setRejectedTakeBufferHandler(RejectedTakeBufferHandler rejectedTakeBufferHandler) {
-        Assert.notNull(rejectedTakeBufferHandler, "RejectedTakeBufferHandler can't be null!");
-        this.rejectedTakeBufferHandler = rejectedTakeBufferHandler;
+        this.ringBuffer.setRejectedTakeHandler(rejectedTakeBufferHandler);
     }
 
 

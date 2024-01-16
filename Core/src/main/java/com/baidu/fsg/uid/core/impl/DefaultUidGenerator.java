@@ -63,42 +63,19 @@ public class DefaultUidGenerator implements UidGenerator {
     /**
      * Spring property
      */
-    private final WorkerIdAssigner workerIdAssigner;
     private final ReentrantLock lock = new ReentrantLock();
+    /**
+     * Stable fields after spring bean initializing
+     */
+    protected final BitsAllocator bitsAllocator;
+    protected final long workerId;
 
     public DefaultUidGenerator(WorkerIdAssigner workerIdAssigner, GeneratorProperties properties) {
-        this.workerIdAssigner = workerIdAssigner;
         this.timeBits = properties.getTimeBits();
         this.workerBits = properties.getWorkerBits();
         this.seqBits = properties.getSeqBits();
         this.epochSeconds = properties.getEpochSeconds();
-    }
-    {
-        afterPropertiesSet();
-    }
 
-    /**
-     * Bits allocate
-     */
-    protected final int timeBits;
-    protected final int workerBits;
-    protected final int seqBits;
-    protected final long epochSeconds;
-
-    /**
-     * Stable fields after spring bean initializing
-     */
-    protected BitsAllocator bitsAllocator;
-    protected long workerId;
-
-    /**
-     * Volatile fields caused by nextId()
-     */
-    protected long sequence = 0L;
-    protected long lastSecond = -1L;
-
-
-    public void afterPropertiesSet() {
         // initialize bits allocator
         bitsAllocator = new BitsAllocator(timeBits, workerBits, seqBits);
 
@@ -110,6 +87,24 @@ public class DefaultUidGenerator implements UidGenerator {
 
         log.info("Initialized bits(1, {}, {}, {}) for workerID:{}", timeBits, workerBits, seqBits, workerId);
     }
+
+    /**
+     * Bits allocate
+     */
+    protected final int timeBits;
+    protected final int workerBits;
+    protected final int seqBits;
+    protected final long epochSeconds;
+
+
+
+    /**
+     * Volatile fields caused by nextId()
+     */
+    protected long sequence = 0L;
+    protected long lastSecond = -1L;
+
+
 
     @Override
     public long getUID() throws UidGenerateException {
